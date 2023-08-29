@@ -1,1 +1,4 @@
 pandas
+pyodbc
+azure-storage-blob
+flask
