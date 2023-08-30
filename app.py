@@ -3,11 +3,12 @@ import pandas as pd
 import datetime
 import os
 import pyodbc
+import tempfile
 
 app = Flask(__name__)
 # Azure SQL Database connection configuration
 server = 'rakkion.database.windows.net'
-database = ' main'
+database = 'rakkion-db'
 username = 'user'
 password = 'FFTeadp#'
 driver = '{ODBC Driver 18 for SQL Server}'
@@ -37,42 +38,58 @@ jobs_structure_rules = [
 # Read CSV file, validate/reject rows, and insert into Azure SQL Database
 def process_csv_file(file_path, data_structure_rules, table_name):
     df = pd.read_csv(file_path, header=None)
-    print(table_name)
     rejected_rows = []
     valid_rows = []
-    
-    with pyodbc.connect(conn_str) as conn:
-        cursor = conn.cursor()
-        batch_size = 1000
-        batch_records = []
+    batch_size = 1000
+
+    cnxn1 = pyodbc.connect("DRIVER={ODBC Driver 18 for SQL Server};SERVER=" + server + ";DATABASE=" + database + ";UID=" + username + ';PWD=' + password, autocommit=False)
+    cursor = cnxn1.cursor()
+
+    # Assuming that table_name is a variable containing the name of the table
+    truncate_query = f"TRUNCATE TABLE dbo.{table_name}"
+    cursor.execute(truncate_query)
+    cnxn1.commit()
+
+    cnxn1.close()
+
+    with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+        temp_csv_file = temp_file.name
 
         for index, row in df.iterrows():
             try:
-                converted_row = tuple(data_type(value) for data_type, value in zip(data_structure_rules, row))
-                batch_records.append(converted_row)
+                converted_row = [data_type(value) for data_type, value in zip(data_structure_rules, row)]
+                valid_rows.append(converted_row)
 
-                if len(batch_records) >= batch_size:
-                    num_columns = len(data_structure_rules)
-                    placeholders = ', '.join(['?' for _ in range(num_columns)])
-                    query = f"INSERT INTO dbo.{table_name} VALUES ({placeholders})"
-                    cursor.executemany(query, batch_records)
-                    conn.commit()
-                    batch_records = []
-                    valid_rows.append(row)
+                if len(valid_rows) == batch_size:
+                    valid_df = pd.DataFrame(valid_rows, columns=df.columns.tolist())
+                    valid_df.to_csv(temp_csv_file, index=False, header=False)
+                    print(len(valid_rows))
+
+                    # Clean up the temporary CSV file
+                    valid_rows = []
+
+                    sCmdExecute = f"bcp dbo.{table_name} in {temp_csv_file} -c -t, -S {server} -d {database} -U {username} -P {password} -b {str(batch_size)} -F 2"
+                    os.system(sCmdExecute)
+                        
             except Exception as e:
                 rejected_rows.append(row.tolist() + [str(e), datetime.datetime.now()])
-        
-        if batch_records:
-            num_columns = len(data_structure_rules)
-            placeholders = ', '.join(['?' for _ in range(num_columns)])
-            query = f"INSERT INTO dbo.{table_name} VALUES ({placeholders})"
-            cursor.executemany(query, batch_records)
-            conn.commit()
 
+        if valid_rows:
+            valid_df = pd.DataFrame(valid_rows, columns=df.columns.tolist())
+            valid_df.to_csv(temp_csv_file, index=False, header=False)
+            print(len(valid_rows))
+            valid_rows = []
+
+            sCmdExecute = f"bcp {table_name} in {temp_csv_file} -c -t, -S {server} -d {database} -U {username} -P {password} -b {str(batch_size)} -F 2"
+            os.system(sCmdExecute)
+
+        # Clean up the temporary CSV file
+        os.remove(temp_csv_file)
+    
     # Create DataFrames for valid and rejected rows
     valid_df = pd.DataFrame(valid_rows, columns=df.columns.tolist())
     rejected_df = pd.DataFrame(rejected_rows, columns=df.columns.tolist() + ['error_message', 'timestamp'])
-    print(valid_df)
+
     return valid_df, rejected_df
 
 # Update the csv_directory variable

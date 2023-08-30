@@ -24,6 +24,9 @@ RUN apt-get install -y mssql-tools18 msodbcsql18 unixodbc-dev
 RUN apt-get update && apt-get install -y \
     python3 python3-pip python3-dev python3-setuptools locales
 
+# Add the directory containing bcp to the PATH
+ENV PATH="/opt/mssql-tools18/bin:${PATH}"
+
 # Create a non-privileged user that the app will run under.
 # See https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#user
 ARG UID=10001
