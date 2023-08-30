@@ -4,3 +4,4 @@ azure-storage-blob
 azure-keyvault-secrets
 azure-identity
 flask
+avro

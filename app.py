@@ -8,6 +8,11 @@ from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 from azure.identity import ClientSecretCredential
 from azure.keyvault.secrets import SecretClient
 import io
+import avro
+from avro import schema
+from avro.datafile import DataFileWriter
+from avro.io import DatumWriter
+import json
 
 app = Flask(__name__)
 
@@ -183,6 +188,93 @@ def upload_data():
 
 
         return jsonify({'message': 'Data uploaded and migrated successfully.'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/backup')
+def backup_tables():
+
+    backup_container = "backups"
+    container_backup = blob_service_client.get_container_client(backup_container)
+
+    # Define the actual schemas for each table
+    actual_schemas = {
+        "hired_employees": [
+            {"name": "id", "type": "int"},
+            {"name": "name", "type": "string"},
+            {"name": "datetime", "type": "string"},
+            {"name": "department_id", "type": "int"},
+            {"name": "job_id", "type": "int"}
+        ],
+        "departments": [
+            {"name": "id", "type": "int"},
+            {"name": "department","type": "string"},
+        ],
+        "jobs": [
+            {"name": "id", "type": "int"},
+            {"name": "job", "type": "string"},
+        ]
+    }
+
+    try:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+
+        for csv_file_info in csv_files:
+            table_name = csv_file_info['table_name']
+            avro_file_name = f"{table_name}_{timestamp}.avro"
+
+            # Get the actual schema for the current table
+            actual_schema = actual_schemas.get(table_name)
+
+            if actual_schema is None:
+                return jsonify({'error': f"No actual schema defined for {table_name}"}), 500
+                
+            avro_schema = {
+                "type": "record",
+                "name": table_name,
+                "fields": actual_schema
+            }
+
+            # Construct the Avro schema JSON-formatted string
+            avro_schema_str = json.dumps({
+                "type": "record",
+                "name": table_name,
+                "fields": actual_schema
+            })
+
+            # Parse the AVRO schema using avro.schema.parse
+            parsed_schema = avro.schema.parse(avro_schema_str)
+ 
+            # Query data from the table
+            cnxn = pyodbc.connect(conn_str)
+            cursor = cnxn.cursor()
+
+            # Query all data from the table
+            query = f"SELECT * FROM dbo.{table_name}"
+            cursor.execute(query)
+            table_data = cursor.fetchall()
+
+            # Upload AVRO data to blob storage
+            blob_name = f"{table_name}_{timestamp}.avro"
+            blob_client = container_backup.get_blob_client(blob_name)
+            avro_stream = io.BytesIO()
+
+            # Serialize AVRO data to avro_stream
+            avro_writer = DataFileWriter(avro_stream, DatumWriter(), parsed_schema)
+            for row in table_data:
+                avro_record = {}  # Create an empty dictionary for the Avro record
+                for i, field_info in enumerate(actual_schema):
+                    field_name = field_info['name']
+                    avro_record[field_name] = row[i]
+                avro_writer.append(avro_record)
+            
+            # Upload avro_stream to blob storage
+            blob_client.upload_blob(avro_stream.getvalue(), overwrite=True)
+            avro_writer.close()
+
+            print(f"Backup completed for {table_name}")
+
+        return jsonify({'message': 'Backups created and stored successfully.'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
