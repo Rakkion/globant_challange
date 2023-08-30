@@ -27,6 +27,17 @@ RUN apt-get update && apt-get install -y \
 # Add the directory containing bcp to the PATH
 ENV PATH="/opt/mssql-tools18/bin:${PATH}"
 
+# Install Azure SDK dependencies
+RUN pip install azure-identity azure-keyvault-secrets
+
+# Install Azure CLI
+RUN curl -sL https://aka.ms/InstallAzureCLIDeb | bash
+
+# Set environment variables
+ENV AZURE_CLIENT_ID=92e1c26c-5d4d-476c-af27-0e356a2990da
+ENV AZURE_CLIENT_SECRET=WHz8Q~3jv5ATt9JzRONf.Z4kBJW660ehADdQ1bSw
+ENV AZURE_TENANT_ID=8f0e4642-c00b-4f6f-95ab-f8a52d41781b
+
 # Create a non-privileged user that the app will run under.
 # See https://docs.docker.com/develop/develop-images/dockerfile_best-practices/#user
 ARG UID=10001

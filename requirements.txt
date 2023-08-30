@@ -1,5 +1,6 @@
 pandas
 pyodbc
 azure-storage-blob
+azure-keyvault-secrets
+azure-identity
 flask
-sqlalchemy
