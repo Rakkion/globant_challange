@@ -280,7 +280,6 @@ def restore_tables(table_name, blob_name):
         backup_container = "backups"
         container_backup = blob_service_client.get_container_client(backup_container)
         
-        blob_name = "hired_employees_20230830222004.avro"
         blob_client = container_backup.get_blob_client(blob_name)
 
         # Download blob content as a byte stream
