@@ -10,8 +10,8 @@ from azure.keyvault.secrets import SecretClient
 import io
 import avro
 from avro import schema
-from avro.datafile import DataFileWriter
-from avro.io import DatumWriter
+from avro.datafile import DataFileWriter, DataFileReader
+from avro.io import DatumWriter, DatumReader
 import json
 
 app = Flask(__name__)
@@ -102,7 +102,6 @@ def process_csv_file(file_path, data_structure_rules, table_name):
                 if len(valid_rows) == batch_size:
                     valid_df = pd.DataFrame(valid_rows, columns=df.columns.tolist())
                     valid_df.to_csv(temp_csv_file, index=False, header=False)
-                    print(len(valid_rows))
 
                     # Clean up the temporary CSV file
                     valid_rows = []
@@ -164,10 +163,6 @@ container_rejected = blob_service_client.get_container_client(rejected_container
 @app.route('/upload_data')
 def upload_data():
     try:
-
-        current_directory = os.getcwd()
-        csv_directory = 'csv/'
-        output_directory = 'outputs/'
 
         for csv_file_info in csv_files:
             csv_file = csv_file_info['file_name']
@@ -277,6 +272,73 @@ def backup_tables():
         return jsonify({'message': 'Backups created and stored successfully.'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/restore/<table_name>/<blob_name>')
+def restore_tables(table_name, blob_name):
+    
+    try:
+        backup_container = "backups"
+        container_backup = blob_service_client.get_container_client(backup_container)
+        
+        blob_name = "hired_employees_20230830222004.avro"
+        blob_client = container_backup.get_blob_client(blob_name)
+
+        # Download blob content as a byte stream
+        blob_stream = blob_client.download_blob().readall()
+
+        # Open the downloaded blob content as a byte stream and read Avro data
+        avro_stream = io.BytesIO(blob_stream)
+        reader = DataFileReader(avro_stream, DatumReader())
+        
+        # Initialize lists to store extracted values
+        user_ids = []
+        names = []
+        datetimes = []
+        department_ids = []
+        job_ids = []
+
+        for data in reader:
+            # Extract values from the record
+            user_ids.append(data['id'])
+            names.append(data['name'])
+            datetimes.append(data['datetime'])
+            department_ids.append(data['department_id'])
+            job_ids.append(data['job_id'])
+
+        reader.close()
+
+        # Create a DataFrame from the extracted data
+        data = {
+            'user_id': user_ids,
+            'name': names,
+            'datetime': datetimes,
+            'department_id': department_ids,
+            'job_id': job_ids
+        }
+        df = pd.DataFrame(data)
+
+        cnxn1 = pyodbc.connect("DRIVER={ODBC Driver 18 for SQL Server};SERVER=" + server + ";DATABASE=" + database + ";UID=" + username + ';PWD=' + password, autocommit=False)
+        cursor = cnxn1.cursor()
+
+        # Assuming that table_name is a variable containing the name of the table
+        truncate_query = f"TRUNCATE TABLE dbo.{table_name}"
+        cursor.execute(truncate_query)
+        cnxn1.commit()
+        cnxn1.close()
+
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+            temp_csv_file = temp_file.name
+            df.to_csv(temp_csv_file, index=False, header=False)
+            sCmdExecute = f"bcp dbo.{table_name} in {temp_csv_file} -c -t, -S {server} -d {database} -U {username} -P {password} -F 1"
+            os.system(sCmdExecute)
+        
+        # Clean up the temporary CSV file
+        os.remove(temp_csv_file)
+
+        return jsonify({'message': 'Backups created and stored successfully.'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/')
 def hello_world():
